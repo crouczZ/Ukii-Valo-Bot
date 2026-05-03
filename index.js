@@ -83,37 +83,48 @@ client.on('messageCreate', async (message) => {
 async function reytinqiYenile(triggerMessage = null) {
     const users = JSON.parse(fs.readFileSync(DATA_FILE));
     const userIDs = Object.keys(users);
-    
+
     if (userIDs.length === 0) {
         if (triggerMessage) return triggerMessage.edit('❌ Qeydiyyatdan keçən heç kim yoxdur! Əvvəlcə `!qeydiyyat` komandasından istifadə edin.');
         return;
     }
 
     let leaderboard = [];
-    let xetalilar = []; // Hesabı tapılmayanları bura yığacağıq
+    let xetalilar = [];
 
     for (const id of userIDs) {
         const user = users[id];
         try {
-            // API sorğusu artıq istifadəçinin qeydiyyatdan keçdiyi regiona görə gedir
             const res = await axios.get(`https://api.henrikdev.xyz/valorant/v1/mmr/${user.region}/${user.name}/${user.tag}`);
-            
-            if (res.data.status === 200 && res.data.data.elo !== null) {
+
+            // API düzgün cavab verirsə və elo dəyəri mövcuddursa
+            if (res.data.status === 200 && res.data.data && res.data.data.elo !== null) {
                 leaderboard.push({
                     discordId: user.discordId,
                     rank: res.data.data.currenttierpatched,
-                    elo: res.data.data.elo 
+                    elo: res.data.data.elo
                 });
             } else {
-                xetalilar.push(`${user.name}#${user.tag} (Rankı yoxdur)`);
+                xetalilar.push(`${user.name}#${user.tag} (Hesab tapıldı, lakin Rank/Elo mövcud deyil)`);
             }
         } catch (err) {
-            xetalilar.push(`${user.name}#${user.tag} (Gizli hesab/API xətası)`);
+            // Xətanın əsl səbəbini tapmaq üçün detallı analiz
+            let xetaSebebi = 'Bilinməyən Xəta';
+            if (err.response) {
+                // API cavab verib, amma xəta kodu ilə (məsələn, 404, 403, 429)
+                xetaSebebi = `Status ${err.response.status}: ${err.response.data?.message || err.response.data?.errors?.[0]?.message || 'Səbəb göstərilməyib'}`;
+            } else if (err.request) {
+                // API ümumiyyətlə cavab verməyib (Render bloklanıb və ya Timeout)
+                xetaSebebi = 'API-yə qoşulmaq mümkün olmadı (IP Bloklanması və ya Serverin cavab verməməsi)';
+            } else {
+                xetaSebebi = err.message;
+            }
+            xetalilar.push(`${user.name}#${user.tag} (${xetaSebebi})`);
         }
     }
 
     if (leaderboard.length === 0) {
-        if (triggerMessage) return triggerMessage.edit(`❌ Heç bir oyunçunun məlumatını çəkmək mümkün olmadı.\n**Səbəblər:** Hesablar gizli ola bilər və ya bu sezon heç rank oynanmayıb.\n*Xəta verən hesablar:* ${xetalilar.join(', ')}`);
+        if (triggerMessage) return triggerMessage.edit(`❌ Heç bir oyunçunun məlumatını çəkmək mümkün olmadı.\n\n⚠️ **Sistemin verdiyi xətalar:**\n${xetalilar.join('\n')}\n\n*Qeyd: Əgər xəta 'Status 403' və ya 'IP Blok' verirsə, bu Render-in API tərəfindən bloklandığını göstərir.*`);
         return;
     }
 
@@ -121,7 +132,7 @@ async function reytinqiYenile(triggerMessage = null) {
 
     const embed = new EmbedBuilder()
         .setTitle('🏆 Həftəlik Valorant Liderlik Lövhəsi')
-        .setColor('#FF4655') 
+        .setColor('#FF4655')
         .setDescription('Serverimizin ən yaxşı oyunçuları!')
         .setTimestamp();
 
@@ -130,32 +141,26 @@ async function reytinqiYenile(triggerMessage = null) {
         let medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '🔹';
         descriptionText += `${medal} **<@${player.discordId}>** - ${player.rank}\n`;
     });
-    
-    // Əgər bəzi hesablar tapılmayıbsa, cədvəlin altına məlumat olaraq əlavə edirik
+
     if (xetalilar.length > 0) {
-        descriptionText += `\n⚠️ *Tapılmayan hesablar:* ${xetalilar.join(', ')}`;
+        descriptionText += `\n\n⚠️ **Tapılmayan/Xəta verən hesablar:**\n${xetalilar.join('\n')}`;
     }
 
     embed.setDescription(descriptionText);
 
-    // Kanalı yoxlayırıq
     const channel = client.channels.cache.get(KANAL_ID);
     if (!channel) {
-        if (triggerMessage) return triggerMessage.edit(`❌ **DİQQƏT:** Məlumatlar çəkildi, amma \`KANAL_ID\` səhvdir və ya bot o kanalı görmür! Render-də ID-ni yoxlayın.\n\n**Hazırki Reytinq:**\n${descriptionText}`);
+        if (triggerMessage) return triggerMessage.edit(`❌ **DİQQƏT:** Məlumatlar çəkildi, amma \`KANAL_ID\` səhvdir! Render-də ID-ni yoxlayın.\n\n**Hazırki Reytinq:**\n${descriptionText}`);
         return;
     }
 
-    // Hər şey qaydasındadırsa kanala göndər
     channel.send({ embeds: [embed] });
-    
-    // "Hesablanır..." mesajını sil
     if (triggerMessage) triggerMessage.delete().catch(()=>{});
-    
-    // Rolvermə əməliyyatı
+
     if (MVP_ROL_ID) {
         const guild = channel.guild;
         const mvpRole = guild.roles.cache.get(MVP_ROL_ID);
-        
+
         if (mvpRole) {
             guild.members.cache.filter(m => m.roles.cache.has(mvpRole.id)).forEach(member => {
                 member.roles.remove(mvpRole).catch(() => {});
